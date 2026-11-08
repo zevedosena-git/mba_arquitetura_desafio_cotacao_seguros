@@ -26,9 +26,10 @@ x-parceira: &parceira
     retries: 5
 
 services:
-  # A API que o aluno instrumenta. Ela consulta as tres parceiras EM SERIE, sem timeout, sem circuit
-  # breaker, sem cache e sem fallback — o Redis abaixo sobe justamente para o cache que ainda nao
-  # existe. O vazio e o enunciado.
+  # Motivo: ligar a API ao Redis e publicar os parâmetros do breaker, do timeout e do TTL.
+  # A agregação continua em série. Os blocos partner-slow, partner-flaky e partner-degrading
+  # não mudam de semente, taxa de falha, latência nem degradação.
+  # Atende docs/enunciado.md, Entrega 2 itens 1 e 2, e a regra de não alterar o perfil das parceiras.
   quotation-api:
     build:
       context: .
@@ -46,12 +47,22 @@ services:
       # escrever uma linha para ver o trace da requisicao no Jaeger. Para desligar: OTEL_SDK_DISABLED=true.
       OTEL_SERVICE_NAME: quotation-api
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+      # Motivo: a API alcança o Redis do compose e sobe com os mesmos números do SAD. Atende docs/enunciado.md, Entrega 2 itens 1 (timeout e limiares) e 2 (TTL e ligação do cache).
+      REDIS_ADDR: redis:6379
+      PARTNER_TIMEOUT_MS: "2500"
+      BREAKER_CONSECUTIVE_FAILURES: "5"
+      BREAKER_OPEN_SECONDS: "5"
+      BREAKER_HALF_OPEN_SUCCESSES: "2"
+      CACHE_TTL_SECONDS: "300"
     depends_on:
       partner-slow:
         condition: service_healthy
       partner-flaky:
         condition: service_healthy
       partner-degrading:
+        condition: service_healthy
+      # Motivo: a cotação só sobe com o cache aceitando conexão. Atende docs/enunciado.md, Entrega 2 item 2 (Cache): a ligação com o Redis é desta entrega.
+      redis:
         condition: service_healthy
       # service_started, e nao service_healthy: o exportador conecta preguicosamente e reconecta
       # sozinho. Amarrar a API a saude do Collector seria dar a observabilidade o poder de derrubar

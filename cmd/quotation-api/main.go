@@ -29,8 +29,14 @@ func main() {
 		log.Fatalf("telemetry: %v", err)
 	}
 
+	// Motivo: o processo liga timeout, breaker e Redis com os parâmetros lidos do ambiente. Atende docs/enunciado.md, Entrega 2: o vazio de client.go e service.go e a ligação com o Redis são desta entrega.
 	api := quotation.NewAPI(
-		quotation.NewService(cfg.Partners, partner.NewClient()),
+		quotation.NewService(cfg.Partners, partner.NewClient(partner.Options{
+			Timeout:             cfg.PartnerTimeout,
+			ConsecutiveFailures: cfg.BreakerConsecutiveFailures,
+			OpenFor:             cfg.BreakerOpen,
+			HalfOpenSuccesses:   cfg.BreakerHalfOpenSuccesses,
+		}), quotation.NewRedisCache(cfg.RedisAddr, cfg.CacheTTL)),
 		cfg.Tenants,
 	)
 

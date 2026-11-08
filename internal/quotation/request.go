@@ -65,4 +65,9 @@ type Response struct {
 	TenantID  string          `json:"tenant_id"`
 	Quotes    []partner.Quote `json:"quotes"`
 	ElapsedMs int64           `json:"elapsed_ms"`
+	// Motivo: a corretora precisa saber que a resposta é degradada, quem faltou, se veio do cache e qual a idade. cache_age_seconds só aparece quando há idade. Atende docs/enunciado.md, Entrega 2 item 3 (Fallback): o contrato de Response muda.
+	Degraded        bool     `json:"degraded"`
+	MissingPartners []string `json:"missing_partners"`
+	ServedFromCache bool     `json:"served_from_cache"`
+	CacheAgeSeconds *int64   `json:"cache_age_seconds,omitempty"`
 }

@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -12,6 +14,13 @@ type Config struct {
 	Partners  []Partner
 	Tenants   []string
 	Telemetry Telemetry
+	// Motivo: timeout, limiares do breaker, TTL e endereço do Redis saem do ambiente, com o mesmo número do SAD. Atende docs/enunciado.md, Entrega 2 itens 1 e 2, e o mapa de internal/platform/config.go (novos parâmetros).
+	PartnerTimeout             time.Duration
+	BreakerConsecutiveFailures int
+	BreakerOpen                time.Duration
+	BreakerHalfOpenSuccesses   int
+	CacheTTL                   time.Duration
+	RedisAddr                  string
 }
 
 type Partner struct {
@@ -48,7 +57,48 @@ func LoadConfig(env func(string) string) (Config, error) {
 	if cfg.Telemetry, err = parseTelemetry(env); err != nil {
 		return Config{}, err
 	}
+	// Motivo: default vazio usa 2500 ms, 5 falhas, 5 s aberto, 2 sucessos e TTL de 300 s, abaixo do teto comercial de 24 h. Atende docs/enunciado.md, Entrega 2 itens 1 e 2.
+	if cfg.PartnerTimeout, err = durationMillis(env, "PARTNER_TIMEOUT_MS", 2500); err != nil {
+		return Config{}, err
+	}
+	if cfg.BreakerConsecutiveFailures, err = positiveInt(env, "BREAKER_CONSECUTIVE_FAILURES", 5); err != nil {
+		return Config{}, err
+	}
+	openSeconds, err := positiveInt(env, "BREAKER_OPEN_SECONDS", 5)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.BreakerOpen = time.Duration(openSeconds) * time.Second
+	if cfg.BreakerHalfOpenSuccesses, err = positiveInt(env, "BREAKER_HALF_OPEN_SUCCESSES", 2); err != nil {
+		return Config{}, err
+	}
+	ttlSeconds, err := positiveInt(env, "CACHE_TTL_SECONDS", 300)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.CacheTTL = time.Duration(ttlSeconds) * time.Second
+	cfg.RedisAddr = text(env, "REDIS_ADDR", "localhost:6379")
 	return cfg, nil
+}
+
+func durationMillis(env func(string) string, key string, fallback int) (time.Duration, error) {
+	millis, err := positiveInt(env, key, fallback)
+	if err != nil {
+		return 0, err
+	}
+	return time.Duration(millis) * time.Millisecond, nil
+}
+
+func positiveInt(env func(string) string, key string, fallback int) (int, error) {
+	raw := strings.TrimSpace(env(key))
+	if raw == "" {
+		return fallback, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("%s: %q is not a positive integer", key, raw)
+	}
+	return n, nil
 }
 
 func parseTelemetry(env func(string) string) (Telemetry, error) {

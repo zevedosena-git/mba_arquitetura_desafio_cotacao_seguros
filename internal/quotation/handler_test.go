@@ -17,7 +17,8 @@ const validBody = `{
 }`
 
 func testAPI(quoter Quoter) http.Handler {
-	return NewAPI(NewService(threePartners, quoter), []string{"corretora-a", "corretora-b"}).Routes()
+	// Motivo: cache nil preserva os testes de contrato que já passavam. Atende docs/enunciado.md, Entrega 2 item 5.
+	return NewAPI(NewService(threePartners, quoter, nil), []string{"corretora-a", "corretora-b"}).Routes()
 }
 
 func postQuotes(h http.Handler, tenant, body string) *httptest.ResponseRecorder {
@@ -92,20 +93,48 @@ func TestQuotesRejectsInvalidBody(t *testing.T) {
 	}
 }
 
+// Motivo: uma parceira fora deixa de ser 502 da requisição inteira e passa a ser 200 com degraded e missing_partners. Atende docs/enunciado.md, Entrega 2 item 3. O nome do teste permanece o que já existia.
 func TestQuotesResponds502WithTheNameOfThePartnerThatWentDown(t *testing.T) {
 	quoter := &fakeQuoter{premiums: defaultPremiums(), failOn: "partner-flaky"}
 	response := postQuotes(testAPI(quoter), "corretora-a", validBody)
 
+	if response.Code != http.StatusOK {
+		t.Fatalf("status %d, expected 200 partial: %s", response.Code, response.Body)
+	}
+	if response.Header().Get(TenantHeader) != "corretora-a" {
+		t.Errorf("X-Tenant-Id %q, expected corretora-a", response.Header().Get(TenantHeader))
+	}
+	if strings.Contains(response.Body.String(), "cache_age_seconds") {
+		t.Fatalf("partial body includes cache_age_seconds: %s", response.Body)
+	}
+
+	var body Response
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unreadable response: %v", err)
+	}
+	if !body.Degraded || body.ServedFromCache || len(body.Quotes) != 2 {
+		t.Fatalf("partial contract: %+v", body)
+	}
+	if len(body.MissingPartners) != 1 || body.MissingPartners[0] != "partner-flaky" {
+		t.Errorf("missing_partners %v, expected partner-flaky", body.MissingPartners)
+	}
+}
+
+// Motivo: zero propostas continua 502 partner insurer unavailable com o campo partner, que o loadgen lê. Atende docs/enunciado.md, Entrega 2 item 3.
+func TestQuotesResponds502WhenNoPartnerAnswers(t *testing.T) {
+	quoter := &fakeQuoter{premiums: defaultPremiums(), failAll: true}
+	response := postQuotes(testAPI(quoter), "corretora-a", validBody)
+
 	if response.Code != http.StatusBadGateway {
-		t.Fatalf("status %d, expected 502", response.Code)
+		t.Fatalf("status %d, expected 502: %s", response.Code, response.Body)
 	}
 
 	var body platform.ErrorBody
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatalf("unreadable error: %v", err)
 	}
-	if body.Partner != "partner-flaky" {
-		t.Errorf("partner blamed %q, expected partner-flaky", body.Partner)
+	if body.Message != "partner insurer unavailable" || body.Partner != "partner-slow" {
+		t.Fatalf("body %+v, expected partner insurer unavailable from partner-slow", body)
 	}
 }
 
